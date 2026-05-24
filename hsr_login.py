@@ -409,7 +409,7 @@ def get_cookie_from_browser(args: argparse.Namespace, config_path: Path) -> str:
 def load_config(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise HsrLoginError(
-            f"ログイン情報が未保存です。先に `python {Path(__file__).name} login` を実行してください。"
+            "ログイン情報が未保存です。先に `hsr-login login` を実行してください。"
         )
     try:
         return json.loads(path.read_text(encoding="utf-8"))
