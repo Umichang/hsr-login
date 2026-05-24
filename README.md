@@ -125,6 +125,47 @@ hsr-login status
 hsr-login logout
 ```
 
+## 応用: 定時実行
+
+`hsr-login login --check` で Cookie を保存したあとは、`hsr-login claim` を定時実行できます。
+
+macOS / Linux では cron を使えます。まず `hsr-login` の実行ファイルの場所を確認します。
+
+```bash
+which hsr-login
+```
+
+`crontab -e` で cron の設定を開き、たとえば毎日 5:10 に実行する場合は次のように追加します。cron は通常のシェルより `PATH` が短いため、`hsr-login` はフルパスで指定してください。
+
+```cron
+10 5 * * * /Users/yourname/.local/bin/hsr-login claim >> /Users/yourname/.local/state/hsr-login.log 2>&1
+```
+
+設定ファイルの場所を明示したい場合は、`HSR_LOGIN_CONFIG` を同じ行で指定できます。
+
+```cron
+10 5 * * * HSR_LOGIN_CONFIG=/Users/yourname/.config/hsr-login/config.json /Users/yourname/.local/bin/hsr-login claim >> /Users/yourname/.local/state/hsr-login.log 2>&1
+```
+
+Windows では cron の代わりに「タスク スケジューラ」を使えます。操作画面から登録する場合は、毎日実行するトリガーを作り、操作として `hsr-login.cmd` のフルパスと `claim` 引数を指定してください。
+
+PowerShell から登録する場合は、次のようにタスクを作成できます。
+
+```powershell
+$action = New-ScheduledTaskAction -Execute "$HOME\.local\bin\hsr-login.cmd" -Argument "claim"
+$trigger = New-ScheduledTaskTrigger -Daily -At 5:10
+Register-ScheduledTask -TaskName "hsr-login claim" -Action $action -Trigger $trigger
+```
+
+`HSR_LOGIN_CONFIG` を使う場合は、PowerShell 経由で環境変数を指定してから実行します。
+
+```powershell
+$command = "`$env:HSR_LOGIN_CONFIG = '$env:APPDATA\hsr-login\config.json'; & '$HOME\.local\bin\hsr-login.cmd' claim"
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -Command `"$command`""
+$trigger = New-ScheduledTaskTrigger -Daily -At 5:10
+Register-ScheduledTask -TaskName "hsr-login claim" -Action $action -Trigger $trigger
+```
+
 ## Cookie の保存先
 
 既定では次の場所に保存します。
