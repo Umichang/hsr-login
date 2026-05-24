@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hsr-login"
-version = "0.1.0"
+dynamic = ["version"]
 description = "CLI command for claiming Honkai: Star Rail HoYoLAB daily check-in rewards."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,3 +33,6 @@ hsr-login = "hsr_login:main"
 
 [tool.setuptools]
 py-modules = ["hsr_login"]
+
+[tool.setuptools.dynamic]
+version = { attr = "hsr_login.__version__" }

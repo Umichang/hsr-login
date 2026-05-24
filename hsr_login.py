@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 
+__version__ = "0.2.1"
 GAME_NAME = "崩壊：スターレイル"
 ACT_ID = "e202303301540311"
 LANG = "ja-jp"
@@ -708,6 +709,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(default_config_path()),
         help="Cookie を保存する設定ファイルパス。既定値: %(default)s",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     subparsers = parser.add_subparsers(dest="command")
 
