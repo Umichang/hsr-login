@@ -19,13 +19,13 @@ Windows PowerShell:
 .\scripts\install-local.ps1
 ```
 
-インストール後は `hsr-login` コマンドで実行します。
+インストール後は `hsr-login` コマンドで実行します。Windows PowerShell 版のインストーラは、既定では `$HOME\.local\bin` に `hsr-login.cmd` と `hsr-login.ps1` を作成し、内部から専用 venv の `Scripts\hsr-login.exe` を呼びます。対話的に実行する場合は、`$HOME\.local\bin` を `PATH` に追加しておけば `hsr-login` と入力できます。タスク スケジューラなどで実行ファイルのフルパスを指定する場合は、`hsr-login.cmd` を指定してください。
 
 ```console
 hsr-login --help
 ```
 
-`hsr-login` コマンドが見つからない場合は、`~/.local/bin` を `PATH` に追加してください。
+`hsr-login` コマンドが見つからない場合は、macOS / Linux では `~/.local/bin`、Windows では `$HOME\.local\bin` を `PATH` に追加してください。
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
@@ -66,6 +66,8 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install .
 .\.venv\Scripts\hsr-login.exe --help
 ```
+
+この venv 直下のインストールでは、Python の console script として `.\.venv\Scripts\hsr-login.exe` が作成されます。上の `install-local.ps1` が `$HOME\.local\bin` に作成する `hsr-login.cmd` とは別です。
 
 `pipx` を使う場合は、ローカルリポジトリから CLI としてインストールできます。
 
