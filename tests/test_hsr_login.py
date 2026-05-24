@@ -20,6 +20,22 @@ class CookieTests(unittest.TestCase):
     def test_auth_cookie_detection_accepts_v2_pair(self):
         self.assertTrue(hsr_login.looks_authenticated("ltuid_v2=123; ltoken_v2=abc"))
 
+    def test_cookies_to_header_keeps_hoyolab_cookies(self):
+        self.assertEqual(
+            hsr_login.cookies_to_header(
+                [
+                    {"name": "ltuid_v2", "value": "123", "domain": ".hoyolab.com"},
+                    {"name": "ltoken_v2", "value": "abc", "domain": "act.hoyolab.com"},
+                    {"name": "session", "value": "skip", "domain": "example.com"},
+                ]
+            ),
+            "ltuid_v2=123; ltoken_v2=abc",
+        )
+
+    def test_cookie_domain_matches_subdomains(self):
+        self.assertTrue(hsr_login.cookie_domain_matches(".act.hoyolab.com"))
+        self.assertFalse(hsr_login.cookie_domain_matches("example.com"))
+
 
 class ConfigTests(unittest.TestCase):
     def test_save_config_keeps_hsr_identity(self):

@@ -4,12 +4,20 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import getpass
+import hashlib
 import json
 import os
+import secrets
+import shutil
+import socket
 import stat
+import struct
+import subprocess
 import sys
 import textwrap
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -31,6 +39,21 @@ DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
 )
+AUTH_COOKIE_NAMES = {
+    "account_id",
+    "account_id_v2",
+    "cookie_token",
+    "cookie_token_v2",
+    "ltoken",
+    "ltoken_v2",
+    "ltuid",
+    "ltuid_v2",
+}
+HOYOLAB_COOKIE_DOMAINS = (
+    "hoyolab.com",
+    "hoyoverse.com",
+)
+DEFAULT_BROWSER_TIMEOUT = 180
 
 
 class HsrLoginError(RuntimeError):
@@ -89,6 +112,298 @@ def looks_authenticated(cookie: str) -> bool:
         {"account_id", "account_id_v2"} & names
     )
     return modern or legacy or token_only
+
+
+def browser_profile_path(config_path: Path) -> Path:
+    return config_path.parent / "browser-profile"
+
+
+def cookie_domain_matches(domain: str) -> bool:
+    normalized = domain.lstrip(".").lower()
+    return any(normalized == target or normalized.endswith(f".{target}") for target in HOYOLAB_COOKIE_DOMAINS)
+
+
+def cookies_to_header(cookies: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    seen: set[str] = set()
+    for cookie in cookies:
+        name = str(cookie.get("name", "")).strip()
+        value = str(cookie.get("value", "")).strip()
+        domain = str(cookie.get("domain", "")).strip()
+        if not name or not value or name.lower() in seen or not cookie_domain_matches(domain):
+            continue
+        seen.add(name.lower())
+        parts.append(f"{name}={value}")
+    return normalize_cookie("; ".join(parts))
+
+
+def find_browser_command(preferred: str | None = None) -> str:
+    if preferred:
+        command = Path(preferred).expanduser()
+        if command.exists():
+            return str(command)
+        resolved = shutil.which(preferred)
+        if resolved:
+            return resolved
+        raise HsrLoginError(f"ブラウザーが見つかりません: {preferred}")
+
+    if value := os.environ.get("HSR_LOGIN_BROWSER"):
+        return find_browser_command(value)
+
+    candidates = [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        str(Path.home() / "Applications/Chromium.app/Contents/MacOS/Chromium"),
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        str(Path.home() / "Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+        "/Applications/Comet.app/Contents/MacOS/Comet",
+        str(Path.home() / "Applications/Comet.app/Contents/MacOS/Comet"),
+        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        str(Path.home() / "Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+        "/Applications/Arc.app/Contents/MacOS/Arc",
+        str(Path.home() / "Applications/Arc.app/Contents/MacOS/Arc"),
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+        "microsoft-edge",
+        "msedge",
+        "brave-browser",
+        "comet",
+    ]
+    for candidate in candidates:
+        path = Path(candidate)
+        if path.exists():
+            return str(path)
+        if resolved := shutil.which(candidate):
+            return resolved
+    raise HsrLoginError(
+        "Chrome / Chromium 系ブラウザーが見つかりません。"
+        "`--manual` で手動入力するか、`--browser-command` で実行ファイルを指定してください。"
+    )
+
+
+def find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def wait_for_json(url: str, timeout: float) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=1.0) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if isinstance(payload, dict):
+                return payload
+        except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            last_error = exc
+        time.sleep(0.25)
+    raise HsrLoginError(f"ブラウザーの DevTools に接続できません: {last_error}")
+
+
+class DevToolsWebSocket:
+    def __init__(self, url: str, timeout: float = 5.0) -> None:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme != "ws" or not parsed.hostname or not parsed.port:
+            raise HsrLoginError(f"未対応の DevTools WebSocket URL です: {url}")
+
+        self.sock = socket.create_connection((parsed.hostname, parsed.port), timeout=timeout)
+        key = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        request = (
+            f"GET {path} HTTP/1.1\r\n"
+            f"Host: {parsed.hostname}:{parsed.port}\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            "\r\n"
+        )
+        self.sock.sendall(request.encode("ascii"))
+        response = self._read_http_response()
+        expected_accept = base64.b64encode(
+            hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")).digest()
+        ).decode("ascii")
+        if " 101 " not in response.split("\r\n", 1)[0] or expected_accept not in response:
+            self.close()
+            raise HsrLoginError("DevTools WebSocket の接続に失敗しました。")
+
+        self._next_id = 0
+
+    def __enter__(self) -> "DevToolsWebSocket":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+    def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._next_id += 1
+        message_id = self._next_id
+        payload = {"id": message_id, "method": method}
+        if params is not None:
+            payload["params"] = params
+        self._send_text(json.dumps(payload, separators=(",", ":")))
+
+        while True:
+            message = self._read_text()
+            try:
+                response = json.loads(message)
+            except json.JSONDecodeError:
+                continue
+            if response.get("id") != message_id:
+                continue
+            if "error" in response:
+                raise HsrLoginError(f"DevTools コマンドに失敗しました: {response['error']}")
+            result = response.get("result")
+            return result if isinstance(result, dict) else {}
+
+    def _read_http_response(self) -> str:
+        chunks: list[bytes] = []
+        while True:
+            chunk = self.sock.recv(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            if b"\r\n\r\n" in b"".join(chunks):
+                break
+        return b"".join(chunks).decode("iso-8859-1", errors="replace")
+
+    def _send_text(self, text: str) -> None:
+        payload = text.encode("utf-8")
+        header = bytearray([0x81])
+        length = len(payload)
+        if length < 126:
+            header.append(0x80 | length)
+        elif length < 65536:
+            header.extend((0x80 | 126, *struct.pack("!H", length)))
+        else:
+            header.extend((0x80 | 127, *struct.pack("!Q", length)))
+        mask = secrets.token_bytes(4)
+        masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+        self.sock.sendall(bytes(header) + mask + masked)
+
+    def _read_text(self) -> str:
+        message = bytearray()
+        while True:
+            opcode, payload = self._read_frame()
+            if opcode == 0x8:
+                raise HsrLoginError("DevTools WebSocket が切断されました。")
+            if opcode == 0x9:
+                self._send_pong(payload)
+                continue
+            if opcode in {0x1, 0x0}:
+                message.extend(payload)
+                return message.decode("utf-8")
+
+    def _read_frame(self) -> tuple[int, bytes]:
+        header = self._recv_exact(2)
+        first, second = header
+        opcode = first & 0x0F
+        masked = bool(second & 0x80)
+        length = second & 0x7F
+        if length == 126:
+            length = struct.unpack("!H", self._recv_exact(2))[0]
+        elif length == 127:
+            length = struct.unpack("!Q", self._recv_exact(8))[0]
+        mask = self._recv_exact(4) if masked else b""
+        payload = self._recv_exact(length)
+        if masked:
+            payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+        return opcode, payload
+
+    def _send_pong(self, payload: bytes) -> None:
+        header = bytearray([0x8A])
+        length = len(payload)
+        if length > 125:
+            return
+        header.append(0x80 | length)
+        mask = secrets.token_bytes(4)
+        masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+        self.sock.sendall(bytes(header) + mask + masked)
+
+    def _recv_exact(self, size: int) -> bytes:
+        data = bytearray()
+        while len(data) < size:
+            chunk = self.sock.recv(size - len(data))
+            if not chunk:
+                raise HsrLoginError("DevTools WebSocket からの読み込みに失敗しました。")
+            data.extend(chunk)
+        return bytes(data)
+
+
+def launch_cookie_browser(args: argparse.Namespace, config_path: Path) -> tuple[subprocess.Popen[bytes], int]:
+    browser = find_browser_command(args.browser_command)
+    port = int(args.debug_port) if args.debug_port else find_free_port()
+    profile_dir = Path(args.profile_dir).expanduser() if args.profile_dir else browser_profile_path(config_path)
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        profile_dir.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+    except OSError:
+        pass
+
+    command = [
+        browser,
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={profile_dir}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--new-window",
+        EVENT_URL,
+    ]
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return process, port
+
+
+def fetch_devtools_cookies(port: int) -> list[dict[str, Any]]:
+    version = wait_for_json(f"http://127.0.0.1:{port}/json/version", timeout=10.0)
+    websocket_url = version.get("webSocketDebuggerUrl")
+    if not isinstance(websocket_url, str):
+        raise HsrLoginError("DevTools の WebSocket URL を取得できません。")
+    with DevToolsWebSocket(websocket_url) as devtools:
+        result = devtools.call("Storage.getCookies")
+    cookies = result.get("cookies")
+    if not isinstance(cookies, list):
+        raise HsrLoginError("ブラウザーから Cookie 一覧を取得できません。")
+    return [cookie for cookie in cookies if isinstance(cookie, dict)]
+
+
+def get_cookie_from_browser(args: argparse.Namespace, config_path: Path) -> str:
+    process, port = launch_cookie_browser(args, config_path)
+    deadline = time.monotonic() + float(args.timeout)
+    print("ブラウザーを開きました。HoYoLAB にログインすると Cookie を自動保存します。")
+    print(f"タイムアウト: {int(args.timeout)} 秒")
+    try:
+        last_cookie = ""
+        while time.monotonic() < deadline:
+            cookies = fetch_devtools_cookies(port)
+            try:
+                cookie = cookies_to_header(cookies)
+            except HsrLoginError:
+                cookie = ""
+            if cookie:
+                last_cookie = cookie
+            if cookie and looks_authenticated(cookie):
+                return cookie
+            time.sleep(2.0)
+    finally:
+        if args.close_browser:
+            process.terminate()
+    if last_cookie:
+        names = ", ".join(sorted(cookie_names(last_cookie) & AUTH_COOKIE_NAMES)) or "なし"
+        raise HsrLoginError(f"認証 Cookie がそろいませんでした。検出した認証系 Cookie: {names}")
+    raise HsrLoginError("HoYoLAB の Cookie を検出できませんでした。")
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -175,21 +490,22 @@ class HoyoLabClient:
         )
 
 
-def get_cookie(args: argparse.Namespace) -> str:
+def get_cookie(args: argparse.Namespace, config_path: Path) -> str:
     if args.cookie:
         return normalize_cookie(args.cookie)
     if args.cookie_file:
         return normalize_cookie(Path(args.cookie_file).expanduser().read_text(encoding="utf-8"))
+    if not args.manual and not args.no_open:
+        try:
+            return get_cookie_from_browser(args, config_path)
+        except HsrLoginError as exc:
+            print(f"自動取得に失敗しました: {exc}", file=sys.stderr)
+            print("手動入力に切り替えます。", file=sys.stderr)
+            print_manual_cookie_help()
     return normalize_cookie(getpass.getpass("HoYoLAB の Cookie ヘッダーを貼り付けてください: "))
 
 
-def command_login(args: argparse.Namespace) -> int:
-    path = Path(args.config).expanduser()
-    if not args.no_open:
-        print(f"{GAME_NAME} のチェックインページを開きます:")
-        print(EVENT_URL)
-        webbrowser.open(EVENT_URL)
-
+def print_manual_cookie_help() -> None:
     print(
         textwrap.dedent(
             f"""
@@ -205,7 +521,18 @@ def command_login(args: argparse.Namespace) -> int:
         ).strip()
     )
 
-    cookie = get_cookie(args)
+
+def command_login(args: argparse.Namespace) -> int:
+    path = Path(args.config).expanduser()
+    if args.manual and not args.no_open:
+        print(f"{GAME_NAME} のチェックインページを開きます:")
+        print(EVENT_URL)
+        webbrowser.open(EVENT_URL)
+
+    if args.manual:
+        print_manual_cookie_help()
+
+    cookie = get_cookie(args, path)
     if not looks_authenticated(cookie):
         print(
             "警告: ltoken_v2/ltuid_v2 などの認証 Cookie が見つかりません。"
@@ -341,7 +668,24 @@ def build_parser() -> argparse.ArgumentParser:
     login = subparsers.add_parser("login", help="HoYoLAB Cookie を保存します。")
     login.add_argument("--cookie", help="Cookie ヘッダーを直接渡します。シェル履歴に残る点に注意してください。")
     login.add_argument("--cookie-file", help="Cookie ヘッダーを書いたテキストファイルを読み込みます。")
-    login.add_argument("--no-open", action="store_true", help="ブラウザーを自動で開きません。")
+    login.add_argument("--manual", action="store_true", help="ブラウザーから自動取得せず、Cookie ヘッダーを手入力します。")
+    login.add_argument("--no-open", action="store_true", help="ブラウザーを自動で開きません。手入力時に使います。")
+    login.add_argument(
+        "--browser-command",
+        help="自動取得に使う Chrome / Chromium 系ブラウザーの実行ファイルパスまたはコマンド名。",
+    )
+    login.add_argument(
+        "--profile-dir",
+        help="自動取得用ブラウザープロファイルの保存先。既定では設定ファイル横の browser-profile を使います。",
+    )
+    login.add_argument("--debug-port", type=int, help="DevTools Protocol 用ポート。通常は自動割り当てします。")
+    login.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_BROWSER_TIMEOUT,
+        help="ブラウザーから Cookie を自動取得するまで待つ秒数。既定値: %(default)s",
+    )
+    login.add_argument("--close-browser", action="store_true", help="Cookie 取得後に自動取得用ブラウザーを閉じます。")
     login.add_argument("--check", action="store_true", help="保存後にログイン状態を確認します。")
     login.set_defaults(func=command_login)
 
