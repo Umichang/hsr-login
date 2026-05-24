@@ -49,5 +49,13 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("/hkrpg/", payload["event_url"])
 
 
+class ParserTests(unittest.TestCase):
+    def test_parser_accepts_installed_command_style(self):
+        args = hsr_login.build_parser().parse_args(["login", "--check"])
+
+        self.assertEqual(args.command, "login")
+        self.assertTrue(args.check)
+
+
 if __name__ == "__main__":
     unittest.main()
