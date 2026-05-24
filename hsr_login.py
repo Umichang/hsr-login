@@ -67,9 +67,18 @@ class ApiResult:
     data: dict[str, Any]
 
 
+def is_windows() -> bool:
+    return os.name == "nt"
+
+
 def default_config_path() -> Path:
     if value := os.environ.get("HSR_LOGIN_CONFIG"):
         return Path(value).expanduser()
+    if is_windows():
+        config_home = os.environ.get("APPDATA")
+        if config_home:
+            return Path(config_home).expanduser() / "hsr-login" / "config.json"
+        return Path.home() / "AppData" / "Roaming" / "hsr-login" / "config.json"
     if value := os.environ.get("XDG_CONFIG_HOME"):
         return Path(value).expanduser() / "hsr-login" / "config.json"
     return Path.home() / ".config" / "hsr-login" / "config.json"
@@ -137,20 +146,40 @@ def cookies_to_header(cookies: list[dict[str, Any]]) -> str:
     return normalize_cookie("; ".join(parts))
 
 
-def find_browser_command(preferred: str | None = None) -> str:
-    if preferred:
-        command = Path(preferred).expanduser()
-        if command.exists():
-            return str(command)
-        resolved = shutil.which(preferred)
-        if resolved:
-            return resolved
-        raise HsrLoginError(f"ブラウザーが見つかりません: {preferred}")
-
-    if value := os.environ.get("HSR_LOGIN_BROWSER"):
-        return find_browser_command(value)
-
+def windows_browser_candidates() -> list[str]:
     candidates = [
+        "chrome",
+        "chrome.exe",
+        "msedge",
+        "msedge.exe",
+        "brave",
+        "brave.exe",
+        "comet",
+        "comet.exe",
+        "arc",
+        "arc.exe",
+    ]
+    program_files = [
+        os.environ.get("LOCALAPPDATA"),
+        os.environ.get("PROGRAMFILES"),
+        os.environ.get("PROGRAMFILES(X86)"),
+    ]
+    relative_paths = [
+        ("Google", "Chrome", "Application", "chrome.exe"),
+        ("Chromium", "Application", "chrome.exe"),
+        ("Microsoft", "Edge", "Application", "msedge.exe"),
+        ("BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+        ("Comet", "Application", "comet.exe"),
+    ]
+    for root in program_files:
+        if not root:
+            continue
+        candidates.extend(str(Path(root).joinpath(*parts)) for parts in relative_paths)
+    return candidates
+
+
+def unix_browser_candidates() -> list[str]:
+    return [
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
         "/Applications/Chromium.app/Contents/MacOS/Chromium",
@@ -172,6 +201,23 @@ def find_browser_command(preferred: str | None = None) -> str:
         "brave-browser",
         "comet",
     ]
+
+
+def find_browser_command(preferred: str | None = None) -> str:
+    if preferred:
+        preferred = preferred.strip().strip('"')
+        command = Path(preferred).expanduser()
+        if command.exists():
+            return str(command)
+        resolved = shutil.which(preferred)
+        if resolved:
+            return resolved
+        raise HsrLoginError(f"ブラウザーが見つかりません: {preferred}")
+
+    if value := os.environ.get("HSR_LOGIN_BROWSER"):
+        return find_browser_command(value)
+
+    candidates = windows_browser_candidates() if is_windows() else unix_browser_candidates()
     for candidate in candidates:
         path = Path(candidate)
         if path.exists():

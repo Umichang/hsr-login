@@ -1,7 +1,9 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import hsr_login
 
@@ -38,6 +40,16 @@ class CookieTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
+    def test_default_config_path_uses_appdata_on_windows(self):
+        with mock.patch("hsr_login.is_windows", return_value=True), mock.patch.dict(
+            os.environ,
+            {"APPDATA": r"C:\Users\kai\AppData\Roaming"},
+            clear=True,
+        ):
+            path = hsr_login.default_config_path()
+
+        self.assertEqual(str(path), r"C:\Users\kai\AppData\Roaming/hsr-login/config.json")
+
     def test_save_config_keeps_hsr_identity(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "config.json"
@@ -47,6 +59,20 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(payload["game"], hsr_login.GAME_NAME)
         self.assertEqual(payload["act_id"], hsr_login.ACT_ID)
         self.assertIn("/hkrpg/", payload["event_url"])
+
+
+class BrowserTests(unittest.TestCase):
+    def test_windows_browser_candidates_include_common_commands(self):
+        candidates = hsr_login.windows_browser_candidates()
+
+        self.assertIn("chrome.exe", candidates)
+        self.assertIn("msedge.exe", candidates)
+
+    def test_preferred_browser_strips_powershell_quotes(self):
+        with mock.patch("hsr_login.shutil.which", return_value=r"C:\Program Files\Google\Chrome\Application\chrome.exe"):
+            path = hsr_login.find_browser_command('"chrome.exe"')
+
+        self.assertEqual(path, r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 
 
 class ParserTests(unittest.TestCase):
