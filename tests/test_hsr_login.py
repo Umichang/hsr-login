@@ -74,15 +74,41 @@ class BrowserTests(unittest.TestCase):
 
         self.assertEqual(path, r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 
+    def test_safaridriver_command_strips_powershell_quotes(self):
+        with mock.patch("hsr_login.shutil.which", return_value="/usr/bin/safaridriver"):
+            path = hsr_login.find_safaridriver_command('"safaridriver"')
+
+        self.assertEqual(path, "/usr/bin/safaridriver")
+
+    def test_webdriver_session_id_accepts_w3c_response(self):
+        self.assertEqual(
+            hsr_login.webdriver_session_id({"value": {"sessionId": "abc", "capabilities": {}}}),
+            "abc",
+        )
+
+    def test_webdriver_error_message_reads_value_message(self):
+        body = json.dumps({"value": {"error": "session not created", "message": "Allow Remote Automation"}})
+
+        self.assertEqual(
+            hsr_login.webdriver_error_message(body),
+            "session not created: Allow Remote Automation",
+        )
+
 
 class ParserTests(unittest.TestCase):
     def test_version_is_current(self):
-        self.assertEqual(hsr_login.__version__, "0.2.1")
+        self.assertEqual(hsr_login.__version__, "0.3.0")
 
     def test_parser_accepts_installed_command_style(self):
         args = hsr_login.build_parser().parse_args(["login", "--check"])
 
         self.assertEqual(args.command, "login")
+        self.assertTrue(args.check)
+
+    def test_parser_accepts_safari_browser(self):
+        args = hsr_login.build_parser().parse_args(["login", "--browser", "safari", "--check"])
+
+        self.assertEqual(args.browser, "safari")
         self.assertTrue(args.check)
 
 

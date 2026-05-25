@@ -1,7 +1,7 @@
 # hsr-login
 崩壊：スターレイルのWebログインボーナスを取得するCLIコマンドです。
 
-現在のバージョンは `0.2.1` です。
+現在のバージョンは `0.3.0` です。
 
 HoYoLAB の Web 版デイリーチェックインのうち、ゲーム名が「崩壊：スターレイル」のものだけを対象にします。原神やゼンレスゾーンゼロのチェックイン API は呼びません。
 
@@ -31,7 +31,7 @@ Windows PowerShell:
 hsr-login login --check
 ```
 
-`hsr-login login --check` では、自動取得用の Chrome / Chromium 系ブラウザーで「崩壊：スターレイル」のチェックインページを開きます。HoYoLAB にログインすると、CLI がブラウザー内の Cookie を検出して保存します。
+`hsr-login login --check` では、自動取得用のブラウザーで「崩壊：スターレイル」のチェックインページを開きます。HoYoLAB にログインすると、CLI がブラウザー内の Cookie を検出して保存します。
 
 保存後は次のコマンドで本日のログインボーナスを受け取れます。
 
@@ -59,10 +59,40 @@ hsr-login logout
 
 ## ログインのオプション
 
-Chrome / Chromium / Edge / Brave / Comet / Arc などを順に探します。Chrome が自動検出できない場合は、実行ファイルを指定できます。
+### ブラウザー自動取得
+
+既定では `--browser auto` として動作します。Chrome / Chromium / Edge / Brave / Comet / Arc などの Chromium 系ブラウザーを順に探し、macOS では Chromium 系ブラウザーが見つからない場合に Safari も候補にします。
+
+Chromium 系ブラウザーを明示する場合は `--browser chromium` を指定します。
+
+```bash
+hsr-login login --browser chromium --check
+```
+
+Chrome が自動検出できない場合は、実行ファイルを指定できます。
 
 ```bash
 hsr-login login --browser-command "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --check
+```
+
+Safari を明示して使う場合は `--browser safari` を指定します。
+
+```bash
+hsr-login login --browser safari --check
+```
+
+Safari 自動取得は macOS の `safaridriver` を使います。初回は Safari の開発メニューで「リモートオートメーションを許可」を有効にするか、次を実行してください。
+
+```bash
+safaridriver --enable
+```
+
+Safari WebDriver は通常の Safari プロファイルではなく隔離された自動化ウィンドウを使うため、普段使いの Safari に保存済みの Cookie は読み取りません。表示された Safari ウィンドウで HoYoLAB にログインしてください。
+
+`safaridriver` の場所を明示する場合は `--safaridriver-command` を使います。
+
+```bash
+hsr-login login --browser safari --safaridriver-command /usr/bin/safaridriver --check
 ```
 
 PowerShell:
@@ -70,6 +100,8 @@ PowerShell:
 ```powershell
 hsr-login login --browser-command "C:\Program Files\Google\Chrome\Application\chrome.exe" --check
 ```
+
+### 手動入力
 
 自動取得を使わず、従来どおり開発者ツールから Request Headers の `Cookie:` 以降を貼り付ける場合は `--manual` を使います。
 
@@ -226,7 +258,9 @@ Windows では次の場所です。
 %APPDATA%\hsr-login\config.json
 ```
 
-保存ファイルは可能な環境では `0600` にします。自動取得用ブラウザーのプロファイルは既定では設定ファイル横の `browser-profile` に保存します。このプロファイルにもログイン情報が含まれるため、共有やコミットはしないでください。
+保存ファイルは可能な環境では `0600` にします。Chromium 系ブラウザーの自動取得用プロファイルは、既定では設定ファイル横の `browser-profile` に保存します。このプロファイルにもログイン情報が含まれるため、共有やコミットはしないでください。
+
+Safari 自動取得では `browser-profile` は使いません。Safari WebDriver の隔離された自動化セッションでログインし、そのセッションから Cookie を取得します。
 
 保存先を変える場合は `--config` または `HSR_LOGIN_CONFIG` を使ってください。
 

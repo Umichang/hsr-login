@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 GAME_NAME = "崩壊：スターレイル"
 ACT_ID = "e202303301540311"
 LANG = "ja-jp"
@@ -55,6 +55,10 @@ HOYOLAB_COOKIE_DOMAINS = (
     "hoyoverse.com",
 )
 DEFAULT_BROWSER_TIMEOUT = 180
+BROWSER_AUTO = "auto"
+BROWSER_CHROMIUM = "chromium"
+BROWSER_SAFARI = "safari"
+BROWSER_CHOICES = (BROWSER_AUTO, BROWSER_CHROMIUM, BROWSER_SAFARI)
 
 
 class HsrLoginError(RuntimeError):
@@ -70,6 +74,10 @@ class ApiResult:
 
 def is_windows() -> bool:
     return os.name == "nt"
+
+
+def is_macos() -> bool:
+    return sys.platform == "darwin"
 
 
 def default_config_path() -> Path:
@@ -205,6 +213,10 @@ def unix_browser_candidates() -> list[str]:
 
 
 def find_browser_command(preferred: str | None = None) -> str:
+    return find_chromium_browser_command(preferred)
+
+
+def find_chromium_browser_command(preferred: str | None = None) -> str:
     if preferred:
         preferred = preferred.strip().strip('"')
         command = Path(preferred).expanduser()
@@ -231,13 +243,52 @@ def find_browser_command(preferred: str | None = None) -> str:
     )
 
 
+def find_safaridriver_command(preferred: str | None = None) -> str:
+    if preferred:
+        preferred = preferred.strip().strip('"')
+        command = Path(preferred).expanduser()
+        if command.exists():
+            return str(command)
+        resolved = shutil.which(preferred)
+        if resolved:
+            return resolved
+        raise HsrLoginError(f"safaridriver が見つかりません: {preferred}")
+
+    if value := os.environ.get("HSR_LOGIN_SAFARIDRIVER"):
+        return find_safaridriver_command(value)
+
+    candidates = [
+        "safaridriver",
+        "/usr/bin/safaridriver",
+        "/System/Cryptexes/App/usr/bin/safaridriver",
+    ]
+    for candidate in candidates:
+        path = Path(candidate)
+        if path.exists():
+            return str(path)
+        if resolved := shutil.which(candidate):
+            return resolved
+    raise HsrLoginError(
+        "Safari 自動取得には macOS の safaridriver が必要です。"
+        "`--manual` で手動入力するか、Chromium 系ブラウザーを使ってください。"
+    )
+
+
+def safari_automation_hint() -> str:
+    return (
+        "Safari 自動取得を使うには、Safari の開発メニューで"
+        "「リモートオートメーションを許可」を有効にするか、"
+        "`safaridriver --enable` を実行してください。"
+    )
+
+
 def find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
 
 
-def wait_for_json(url: str, timeout: float) -> dict[str, Any]:
+def wait_for_json(url: str, timeout: float, service_name: str = "ブラウザーの DevTools") -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
     while time.monotonic() < deadline:
@@ -249,7 +300,7 @@ def wait_for_json(url: str, timeout: float) -> dict[str, Any]:
         except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
             last_error = exc
         time.sleep(0.25)
-    raise HsrLoginError(f"ブラウザーの DevTools に接続できません: {last_error}")
+    raise HsrLoginError(f"{service_name} に接続できません: {last_error}")
 
 
 class DevToolsWebSocket:
@@ -390,8 +441,8 @@ class DevToolsWebSocket:
         return bytes(data)
 
 
-def launch_cookie_browser(args: argparse.Namespace, config_path: Path) -> tuple[subprocess.Popen[bytes], int]:
-    browser = find_browser_command(args.browser_command)
+def launch_chromium_cookie_browser(args: argparse.Namespace, config_path: Path) -> tuple[subprocess.Popen[bytes], int]:
+    browser = find_chromium_browser_command(args.browser_command)
     port = int(args.debug_port) if args.debug_port else find_free_port()
     profile_dir = Path(args.profile_dir).expanduser() if args.profile_dir else browser_profile_path(config_path)
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -426,8 +477,8 @@ def fetch_devtools_cookies(port: int) -> list[dict[str, Any]]:
     return [cookie for cookie in cookies if isinstance(cookie, dict)]
 
 
-def get_cookie_from_browser(args: argparse.Namespace, config_path: Path) -> str:
-    process, port = launch_cookie_browser(args, config_path)
+def get_cookie_from_chromium(args: argparse.Namespace, config_path: Path) -> str:
+    process, port = launch_chromium_cookie_browser(args, config_path)
     deadline = time.monotonic() + float(args.timeout)
     print("ブラウザーを開きました。HoYoLAB にログインすると Cookie を自動保存します。")
     print(f"タイムアウト: {int(args.timeout)} 秒")
@@ -451,6 +502,177 @@ def get_cookie_from_browser(args: argparse.Namespace, config_path: Path) -> str:
         names = ", ".join(sorted(cookie_names(last_cookie) & AUTH_COOKIE_NAMES)) or "なし"
         raise HsrLoginError(f"認証 Cookie がそろいませんでした。検出した認証系 Cookie: {names}")
     raise HsrLoginError("HoYoLAB の Cookie を検出できませんでした。")
+
+
+def webdriver_json_request(
+    method: str,
+    url: str,
+    payload: dict[str, Any] | None = None,
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    data = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json; charset=utf-8"
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        message = webdriver_error_message(body) or str(exc)
+        raise HsrLoginError(f"Safari WebDriver コマンドに失敗しました: {message}") from exc
+    except (OSError, urllib.error.URLError) as exc:
+        raise HsrLoginError(f"Safari WebDriver に接続できません: {exc}") from exc
+
+    try:
+        result = json.loads(body) if body else {}
+    except json.JSONDecodeError as exc:
+        raise HsrLoginError(f"Safari WebDriver の応答を JSON として読めません: {body}") from exc
+    if not isinstance(result, dict):
+        raise HsrLoginError("Safari WebDriver の応答形式が不正です。")
+    return result
+
+
+def webdriver_error_message(body: str) -> str | None:
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return body.strip() or None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("value")
+    if isinstance(value, dict):
+        message = value.get("message")
+        error = value.get("error")
+        if message and error:
+            return f"{error}: {message}"
+        if message:
+            return str(message)
+    message = payload.get("message")
+    return str(message) if message else None
+
+
+def launch_safaridriver(args: argparse.Namespace) -> tuple[subprocess.Popen[bytes], int]:
+    if not is_macos():
+        raise HsrLoginError("Safari 自動取得は macOS でのみ利用できます。")
+    command = find_safaridriver_command(getattr(args, "safaridriver_command", None))
+    port = int(args.debug_port) if args.debug_port else find_free_port()
+    try:
+        process = subprocess.Popen(
+            [command, "-p", str(port)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        raise HsrLoginError(f"safaridriver を起動できません: {exc}") from exc
+    return process, port
+
+
+def create_safari_webdriver_session(port: int) -> str:
+    endpoint = f"http://127.0.0.1:{port}/session"
+    payload = {"capabilities": {"alwaysMatch": {"browserName": "safari"}}}
+    deadline = time.monotonic() + 10.0
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            response = webdriver_json_request("POST", endpoint, payload, timeout=1.0)
+            session_id = webdriver_session_id(response)
+            if session_id:
+                return session_id
+            raise HsrLoginError("Safari WebDriver の session ID を取得できません。")
+        except HsrLoginError as exc:
+            last_error = exc
+            time.sleep(0.25)
+    raise HsrLoginError(f"Safari WebDriver セッションを開始できません: {last_error} {safari_automation_hint()}")
+
+
+def webdriver_session_id(response: dict[str, Any]) -> str | None:
+    value = response.get("value")
+    if isinstance(value, dict) and isinstance(value.get("sessionId"), str):
+        return value["sessionId"]
+    if isinstance(response.get("sessionId"), str):
+        return response["sessionId"]
+    return None
+
+
+def safari_webdriver_base_url(port: int, session_id: str) -> str:
+    return f"http://127.0.0.1:{port}/session/{urllib.parse.quote(session_id)}"
+
+
+def navigate_safari_webdriver(port: int, session_id: str) -> None:
+    webdriver_json_request("POST", f"{safari_webdriver_base_url(port, session_id)}/url", {"url": EVENT_URL})
+
+
+def fetch_safari_webdriver_cookies(port: int, session_id: str) -> list[dict[str, Any]]:
+    response = webdriver_json_request("GET", f"{safari_webdriver_base_url(port, session_id)}/cookie", timeout=3.0)
+    cookies = response.get("value")
+    if not isinstance(cookies, list):
+        raise HsrLoginError("Safari から Cookie 一覧を取得できません。")
+    return [cookie for cookie in cookies if isinstance(cookie, dict)]
+
+
+def delete_safari_webdriver_session(port: int, session_id: str) -> None:
+    try:
+        webdriver_json_request("DELETE", safari_webdriver_base_url(port, session_id), timeout=2.0)
+    except HsrLoginError:
+        pass
+
+
+def get_cookie_from_safari(args: argparse.Namespace, config_path: Path) -> str:
+    del config_path
+    if args.profile_dir:
+        raise HsrLoginError("Safari 自動取得では `--profile-dir` は使えません。Safari WebDriver の隔離セッションを使います。")
+    process, port = launch_safaridriver(args)
+    session_id: str | None = None
+    last_cookie = ""
+    deadline = time.monotonic() + float(args.timeout)
+    print("Safari の自動化ウィンドウを開きます。HoYoLAB にログインすると Cookie を自動保存します。")
+    print(f"タイムアウト: {int(args.timeout)} 秒")
+    try:
+        session_id = create_safari_webdriver_session(port)
+        navigate_safari_webdriver(port, session_id)
+        while time.monotonic() < deadline:
+            cookies = fetch_safari_webdriver_cookies(port, session_id)
+            try:
+                cookie = cookies_to_header(cookies)
+            except HsrLoginError:
+                cookie = ""
+            if cookie:
+                last_cookie = cookie
+            if cookie and looks_authenticated(cookie):
+                return cookie
+            time.sleep(2.0)
+    finally:
+        if session_id and args.close_browser:
+            delete_safari_webdriver_session(port, session_id)
+        process.terminate()
+        try:
+            process.wait(timeout=2.0)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    if last_cookie:
+        names = ", ".join(sorted(cookie_names(last_cookie) & AUTH_COOKIE_NAMES)) or "なし"
+        raise HsrLoginError(f"認証 Cookie がそろいませんでした。検出した認証系 Cookie: {names}")
+    raise HsrLoginError("HoYoLAB の Cookie を検出できませんでした。")
+
+
+def get_cookie_from_browser(args: argparse.Namespace, config_path: Path) -> str:
+    browser = getattr(args, "browser", BROWSER_AUTO)
+    if browser == BROWSER_SAFARI:
+        return get_cookie_from_safari(args, config_path)
+    if browser == BROWSER_CHROMIUM or args.browser_command:
+        return get_cookie_from_chromium(args, config_path)
+
+    try:
+        find_chromium_browser_command(None)
+    except HsrLoginError:
+        if is_macos():
+            find_safaridriver_command(getattr(args, "safaridriver_command", None))
+            return get_cookie_from_safari(args, config_path)
+        raise
+    return get_cookie_from_chromium(args, config_path)
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -719,14 +941,24 @@ def build_parser() -> argparse.ArgumentParser:
     login.add_argument("--manual", action="store_true", help="ブラウザーから自動取得せず、Cookie ヘッダーを手入力します。")
     login.add_argument("--no-open", action="store_true", help="ブラウザーを自動で開きません。手入力時に使います。")
     login.add_argument(
+        "--browser",
+        choices=BROWSER_CHOICES,
+        default=BROWSER_AUTO,
+        help="自動取得に使うブラウザー。auto は Chromium 系を優先し、macOS では Safari も候補にします。既定値: %(default)s",
+    )
+    login.add_argument(
         "--browser-command",
         help="自動取得に使う Chrome / Chromium 系ブラウザーの実行ファイルパスまたはコマンド名。",
+    )
+    login.add_argument(
+        "--safaridriver-command",
+        help="Safari 自動取得に使う safaridriver の実行ファイルパスまたはコマンド名。",
     )
     login.add_argument(
         "--profile-dir",
         help="自動取得用ブラウザープロファイルの保存先。既定では設定ファイル横の browser-profile を使います。",
     )
-    login.add_argument("--debug-port", type=int, help="DevTools Protocol 用ポート。通常は自動割り当てします。")
+    login.add_argument("--debug-port", type=int, help="DevTools / WebDriver 用ポート。通常は自動割り当てします。")
     login.add_argument(
         "--timeout",
         type=int,
