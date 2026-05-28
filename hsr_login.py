@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 GAME_NAME = "崩壊：スターレイル"
 ACT_ID = "e202303301540311"
 LANG = "ja-jp"
