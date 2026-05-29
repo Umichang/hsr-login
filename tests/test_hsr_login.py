@@ -155,7 +155,7 @@ class BrowserTests(unittest.TestCase):
 
 class ParserTests(unittest.TestCase):
     def test_version_is_current(self):
-        self.assertEqual(hsr_login.__version__, "0.3.1")
+        self.assertEqual(hsr_login.__version__, "0.4.0")
 
     def test_parser_accepts_installed_command_style(self):
         args = hsr_login.build_parser().parse_args(["login", "--check"])

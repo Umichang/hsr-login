@@ -4,7 +4,7 @@
 
 A CLI command for claiming Honkai: Star Rail web login bonus rewards.
 
-Current version: `0.3.1`.
+Current version: `0.4.0`.
 
 This command targets only the HoYoLAB web daily check-in whose game name is Honkai: Star Rail. It does not call the check-in APIs for Genshin Impact or Zenless Zone Zero.
 
