@@ -1,11 +1,14 @@
 # hsr-login
-崩壊：スターレイルのWebログインボーナスを取得するCLIコマンドです。
 
-現在のバージョンは `0.3.1` です。
+[English](README.md) | [日本語](README-ja.md)
 
-HoYoLAB の Web 版デイリーチェックインのうち、ゲーム名が「崩壊：スターレイル」のものだけを対象にします。原神やゼンレスゾーンゼロのチェックイン API は呼びません。
+A CLI command for claiming Honkai: Star Rail web login bonus rewards.
 
-## クイックインストール
+Current version: `0.4.0`.
+
+This command targets only the HoYoLAB web daily check-in whose game name is Honkai: Star Rail. It does not call the check-in APIs for Genshin Impact or Zenless Zone Zero.
+
+## Quick Install
 
 macOS / Linux:
 
@@ -19,57 +22,65 @@ Windows PowerShell:
 pipx install hsr-login
 ```
 
-インストール後は `hsr-login` コマンドで実行します。
+After installation, run it with the `hsr-login` command.
 
-`pipx` を使うと、専用の仮想環境に PyPI 版の `hsr-login` を入れ、コマンドだけを普段の `PATH` から呼び出せます。`hsr-login` コマンドが見つからない場合は、[PATH の設定](#path-の設定)を確認してください。
+`pipx` installs the PyPI release of `hsr-login` into a dedicated virtual environment and exposes only the command on your normal `PATH`. If the `hsr-login` command is not found, check [PATH Setup](#path-setup).
 
-## 使い方
+## Usage
 
-初回だけ HoYoLAB のログイン Cookie を保存します。
+Save your HoYoLAB login Cookie once.
 
 ```bash
 hsr-login login --check
 ```
 
-`hsr-login login --check` では、自動取得用のブラウザーで「崩壊：スターレイル」のチェックインページを開きます。HoYoLAB にログインすると、CLI がブラウザー内の Cookie を検出して保存します。
+`hsr-login login --check` opens the Honkai: Star Rail check-in page in a browser used for automatic capture. After you log in to HoYoLAB, the CLI detects and saves the Cookie from that browser.
 
-保存後は次のコマンドで本日のログインボーナスを受け取れます。
+After that, claim today's login bonus with:
 
 ```bash
 hsr-login claim
 ```
 
-サブコマンドを省略した場合も `claim` として動作します。
+If you omit the subcommand, `hsr-login` also runs `claim`.
 
 ```bash
 hsr-login
 ```
 
-受け取り状態だけを確認する場合は次を使います。
+To check only today's claim status, use:
 
 ```bash
 hsr-login status
 ```
 
-保存した Cookie を削除する場合は次を使います。
+To delete the saved Cookie, use:
 
 ```bash
 hsr-login logout
 ```
 
-## ログインのオプション
+## Display Language
 
-### ブラウザー自動取得
+CLI output is shown in Japanese for Japanese environments and English for non-Japanese environments.
 
-既定では `--browser auto` として動作します。Chrome / Chromium / Edge / Brave / Comet / Arc などの Chromium 系ブラウザーを順に探し、macOS では Chromium 系ブラウザーが見つからない場合に Safari も候補にします。
+The language is not detected from the terminal locale. Instead, the command first uses the saved HoYoLAB Cookie's `mi18nLang`. `mi18nLang=ja-jp` selects Japanese; other languages select English. The HoYoLAB API `lang` parameter follows the same rule.
 
-Chromium 系ブラウザーを明示する場合は `--browser chromium` を指定します。
+If login information has already been saved, the command uses `ui_language` / `lang` in the config file. Before the first login, when HoYoLAB language information is not available yet, it uses the OS display language where possible. If that is also unavailable, it falls back to English.
+
+## Login Options
+
+### Automatic Browser Capture
+
+By default, login uses `--browser auto`. It looks for Chromium-family browsers such as Chrome, Chromium, Edge, Brave, Comet, and Arc. On macOS, if no Chromium-family browser is found, Safari is also considered.
+
+To explicitly use a Chromium-family browser, pass `--browser chromium`.
 
 ```bash
 hsr-login login --browser chromium --check
 ```
 
-Chrome が自動検出できない場合は、実行ファイルを指定できます。
+If Chrome is not detected automatically, you can specify the executable.
 
 macOS:
 
@@ -83,61 +94,61 @@ Windows PowerShell:
 hsr-login login --browser-command "C:\Program Files\Google\Chrome\Application\chrome.exe" --check
 ```
 
-Safari を明示して使う場合は `--browser safari` を指定します。
+To explicitly use Safari, pass `--browser safari`.
 
 ```bash
 hsr-login login --browser safari --check
 ```
 
-Safari 自動取得は macOS の `safaridriver` を使います。初回は Safari の開発メニューで「リモートオートメーションを許可」を有効にするか、次を実行してください。
+Safari automatic capture uses macOS `safaridriver`. On first use, enable "Allow Remote Automation" in Safari's Develop menu or run:
 
 ```bash
 safaridriver --enable
 ```
 
-Safari WebDriver は通常の Safari プロファイルではなく隔離された自動化ウィンドウを使うため、普段使いの Safari に保存済みの Cookie は読み取りません。表示された Safari ウィンドウで HoYoLAB にログインしてください。
+Safari WebDriver uses an isolated automation window rather than your normal Safari profile, so it does not read Cookies already saved in your everyday Safari session. Log in to HoYoLAB in the Safari window that appears.
 
-`safaridriver` の場所を明示する場合は `--safaridriver-command` を使います。
+To specify the `safaridriver` location, use `--safaridriver-command`.
 
 ```bash
 hsr-login login --browser safari --safaridriver-command /usr/bin/safaridriver --check
 ```
 
-### 手動入力
+### Manual Entry
 
-自動取得を使わず、従来どおり開発者ツールから Request Headers の `Cookie:` 以降を貼り付ける場合は `--manual` を使います。
+To skip automatic capture and paste the value after `Cookie:` from Request Headers in browser developer tools, use `--manual`.
 
 ```bash
 hsr-login login --manual --check
 ```
 
-## インストール詳細
+## Installation Details
 
-Homebrew 版 Python など PEP 668 に対応した環境では、グローバルな `python3 -m pip install --user ...` が `externally-managed-environment` で失敗することがあります。CLI として使う場合は、専用 venv を自動で管理する `pipx` を推奨します。
+On PEP 668-aware environments such as Homebrew Python, global `python3 -m pip install --user ...` can fail with `externally-managed-environment`. For CLI use, `pipx` is recommended because it manages a dedicated venv automatically.
 
-### PyPI からインストールする
+### Install From PyPI
 
-PyPI に公開済みのリリースは、次のコマンドでインストールできます。
+Install the published PyPI release with:
 
 ```bash
 pipx install hsr-login
 ```
 
-更新する場合は次を使います。
+To upgrade:
 
 ```bash
 pipx upgrade hsr-login
 ```
 
-すでに自分で作った venv の中に入れる場合は、通常の `pip install` も使えます。
+If you already have your own venv, regular `pip install` also works.
 
 ```bash
 python -m pip install hsr-login
 ```
 
-### ローカルリポジトリからインストールする
+### Install From a Local Checkout
 
-未公開の開発版をこのリポジトリから入れる場合は、専用 venv に `pip install` して `hsr-login` コマンドだけを呼べるようにするローカルインストーラを使えます。
+To install an unpublished development version from this repository, you can use the local installer. It installs into a dedicated venv and exposes only the `hsr-login` command.
 
 macOS / Linux:
 
@@ -151,35 +162,35 @@ Windows PowerShell:
 .\scripts\install-local.ps1
 ```
 
-インストール後は `hsr-login` コマンドで実行します。
+After installation, run it with the `hsr-login` command.
 
 ```console
 hsr-login --help
 ```
 
-バージョンを確認する場合は次を使います。
+To check the version:
 
 ```console
 hsr-login --version
 ```
 
-### PATH の設定
+### PATH Setup
 
-`hsr-login` コマンドが見つからない場合は、macOS / Linux では `~/.local/bin`、Windows では `$HOME\.local\bin` を `PATH` に追加してください。
+If the `hsr-login` command is not found, add `~/.local/bin` on macOS / Linux, or `$HOME\.local\bin` on Windows, to your `PATH`.
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-PowerShell では次のように追加できます。
+In PowerShell:
 
 ```powershell
 $env:Path = "$HOME\.local\bin;$env:Path"
 ```
 
-### インストール先を変える
+### Change Install Location
 
-インストール先を変えたい場合は、次の環境変数を使えます。
+Use these environment variables to change the install location.
 
 ```bash
 HSR_LOGIN_VENV_DIR=~/.venvs/hsr-login HSR_LOGIN_BIN_DIR=~/bin ./scripts/install-local.sh
@@ -193,9 +204,9 @@ $env:HSR_LOGIN_BIN_DIR = "$HOME\bin"
 .\scripts\install-local.ps1
 ```
 
-### 既存の venv を使う
+### Use an Existing venv
 
-すでに venv を使っている場合は、その venv の中で通常の `pip install` も使えます。
+If you already use a venv, you can install with regular `pip install` inside it.
 
 ```bash
 python3 -m venv .venv
@@ -211,54 +222,56 @@ python -m venv .venv
 .\.venv\Scripts\hsr-login.exe --help
 ```
 
-この venv 直下のインストールでは、Python の console script として `.\.venv\Scripts\hsr-login.exe` が作成されます。上の `install-local.ps1` が `$HOME\.local\bin` に作成する `hsr-login.cmd` とは別です。
+This direct venv installation creates `.\.venv\Scripts\hsr-login.exe` as a Python console script. That is separate from the `hsr-login.cmd` shim created in `$HOME\.local\bin` by `install-local.ps1`.
 
-### pipx でローカル版を使う
+### Use the Local Version With pipx
 
-`pipx` でも、ローカルリポジトリから開発版を CLI としてインストールできます。
+`pipx` can also install the development version from a local checkout as a CLI.
 
 ```bash
 pipx install .
 ```
 
-### Windows の実行ファイル名
+### Windows Executable Names
 
-Windows PowerShell 版のインストーラは、既定では `$HOME\.local\bin` に `hsr-login.cmd` と `hsr-login.ps1` を作成し、内部から専用 venv の `Scripts\hsr-login.exe` を呼びます。
+The Windows PowerShell installer creates `hsr-login.cmd` and `hsr-login.ps1` in `$HOME\.local\bin` by default, and internally calls the dedicated venv's `Scripts\hsr-login.exe`.
 
-対話的に実行する場合は、`$HOME\.local\bin` を `PATH` に追加しておけば `hsr-login` と入力できます。タスク スケジューラなどで実行ファイルのフルパスを指定する場合は、`hsr-login.cmd` を指定してください。
+For interactive use, adding `$HOME\.local\bin` to `PATH` lets you type `hsr-login`. If you need a full executable path, such as in Task Scheduler, point it to `hsr-login.cmd`.
 
-## PyPI 公開手順
+## PyPI Publishing
 
-このリポジトリは `pyproject.toml` の `project.scripts` で `hsr-login = "hsr_login:main"` を公開します。wheel / sdist を作る場合は次を実行します。
+This repository exposes `hsr-login = "hsr_login:main"` through `project.scripts` in `pyproject.toml`. To build a wheel / sdist, run:
 
 ```bash
 python -m pip install --upgrade build
 python -m build
 ```
 
-公開は GitHub Actions の `Publish to PyPI` ワークフローを使います。PyPI 側で `Umichang/hsr-login` に対する Trusted Publishing を設定してから、GitHub Release を publish するか、手動で workflow dispatch を実行してください。
+Publishing uses the GitHub Actions `Publish to PyPI` workflow. Configure Trusted Publishing on PyPI for `Umichang/hsr-login`, then publish a GitHub Release or run the workflow manually with workflow dispatch.
 
-リリース前には、`hsr_login.py` の `__version__`、README 冒頭の現在バージョン、GitHub Release のタグを同じバージョンにそろえてください。
+Before release, keep `__version__` in `hsr_login.py`, the current version at the top of the README, and the GitHub Release tag aligned.
 
-## Cookie の保存先
+## Cookie Storage
 
-既定では次の場所に保存します。
+By default, the Cookie is saved at:
 
 ```text
 ~/.config/hsr-login/config.json
 ```
 
-Windows では次の場所です。
+On Windows:
 
 ```text
 %APPDATA%\hsr-login\config.json
 ```
 
-保存ファイルは可能な環境では `0600` にします。Chromium 系ブラウザーの自動取得用プロファイルは、既定では設定ファイル横の `browser-profile` に保存します。このプロファイルにもログイン情報が含まれるため、共有やコミットはしないでください。
+Where possible, the saved file is set to `0600`. The automatic capture profile for Chromium-family browsers is stored in `browser-profile` next to the config file by default. This profile also contains login information, so do not share or commit it.
 
-Safari 自動取得では `browser-profile` は使いません。Safari WebDriver の隔離された自動化セッションでログインし、そのセッションから Cookie を取得します。
+The config file also stores `lang` for the HoYoLAB API and `ui_language` for CLI output. Normally these are derived automatically from the HoYoLAB Cookie's `mi18nLang` captured at login.
 
-保存先を変える場合は `--config` または `HSR_LOGIN_CONFIG` を使ってください。
+Safari automatic capture does not use `browser-profile`. It logs in through an isolated Safari WebDriver automation session and reads Cookies from that session.
+
+To change the storage path, use `--config` or `HSR_LOGIN_CONFIG`.
 
 ```bash
 hsr-login --config ~/.config/hsr-login/main.json login
@@ -273,33 +286,33 @@ $env:HSR_LOGIN_CONFIG = "$env:APPDATA\hsr-login\main.json"
 hsr-login claim
 ```
 
-Cookie はログイン情報そのものです。共有リポジトリへコミットしたり、チャットやログへ貼り付けたりしないでください。
+The Cookie is login information. Do not commit it to shared repositories or paste it into chats or logs.
 
-## 定時実行
+## Scheduled Execution
 
-`hsr-login login --check` で Cookie を保存したあとは、`hsr-login claim` を定時実行できます。
+After saving the Cookie with `hsr-login login --check`, you can run `hsr-login claim` on a schedule.
 
-macOS / Linux では cron を使えます。まず `hsr-login` の実行ファイルの場所を確認します。
+On macOS / Linux, you can use cron. First check where the `hsr-login` executable is located.
 
 ```bash
 which hsr-login
 ```
 
-`crontab -e` で cron の設定を開き、たとえば毎日 5:10 に実行する場合は次のように追加します。cron は通常のシェルより `PATH` が短いため、`hsr-login` はフルパスで指定してください。
+Open your cron settings with `crontab -e`. For example, to run it every day at 5:10, add the following line. cron usually has a shorter `PATH` than your normal shell, so specify the full path to `hsr-login`.
 
 ```cron
 10 5 * * * /Users/yourname/.local/bin/hsr-login claim >> /Users/yourname/.local/state/hsr-login.log 2>&1
 ```
 
-設定ファイルの場所を明示したい場合は、`HSR_LOGIN_CONFIG` を同じ行で指定できます。
+If you want to specify the config file location, set `HSR_LOGIN_CONFIG` on the same line.
 
 ```cron
 10 5 * * * HSR_LOGIN_CONFIG=/Users/yourname/.config/hsr-login/config.json /Users/yourname/.local/bin/hsr-login claim >> /Users/yourname/.local/state/hsr-login.log 2>&1
 ```
 
-Windows では cron の代わりに「タスク スケジューラ」を使えます。操作画面から登録する場合は、毎日実行するトリガーを作り、操作として `hsr-login.cmd` のフルパスと `claim` 引数を指定してください。
+On Windows, use Task Scheduler instead of cron. In the GUI, create a daily trigger and set the action to the full path of `hsr-login.cmd` with the `claim` argument.
 
-PowerShell から登録する場合は、次のようにタスクを作成できます。
+You can also create the task from PowerShell:
 
 ```powershell
 $action = New-ScheduledTaskAction -Execute "$HOME\.local\bin\hsr-login.cmd" -Argument "claim"
@@ -307,7 +320,7 @@ $trigger = New-ScheduledTaskTrigger -Daily -At 5:10
 Register-ScheduledTask -TaskName "hsr-login claim" -Action $action -Trigger $trigger
 ```
 
-`HSR_LOGIN_CONFIG` を使う場合は、PowerShell 経由で環境変数を指定してから実行します。
+When using `HSR_LOGIN_CONFIG`, run through PowerShell so the environment variable is set before execution.
 
 ```powershell
 $command = "`$env:HSR_LOGIN_CONFIG = '$env:APPDATA\hsr-login\config.json'; & '$HOME\.local\bin\hsr-login.cmd' claim"
@@ -316,18 +329,18 @@ $trigger = New-ScheduledTaskTrigger -Daily -At 5:10
 Register-ScheduledTask -TaskName "hsr-login claim" -Action $action -Trigger $trigger
 ```
 
-## 対象ページ
+## Target Page
 
-このスクリプトは HoYoLAB の「崩壊：スターレイル」チェックインページで使われている `hkrpg` 用の `act_id=e202303301540311` を使います。
+This script uses the `hkrpg` `act_id=e202303301540311` used by the HoYoLAB Honkai: Star Rail check-in page.
 
 ```text
 https://act.hoyolab.com/bbs/event/signin/hkrpg/index.html?act_id=e202303301540311
 ```
 
-HoYoLAB 側の CAPTCHA / リスク判定が出た場合は、CLI では受け取りに失敗します。その場合はブラウザーで手動確認してください。
+If HoYoLAB shows CAPTCHA / risk verification, the CLI claim will fail. In that case, confirm manually in the browser.
 
 ## FAQ
 
-Q. なぜ原神やゼンレスゾーンゼロには対応していないの？
+Q. Why does this not support Genshin Impact or Zenless Zone Zero?
 
-A. どちらも作者が引退状態で、不具合が出た際に即座に対応できないからです。仕組みとしては同じなので、どなたか面倒を見てくださる方がいればワンチャンはあります。自分からはやりません。
+A. The author no longer actively plays either game and cannot respond quickly if something breaks. The mechanism is similar, so someone else could maintain that support, but this project will not add it proactively.
