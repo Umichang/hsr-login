@@ -53,12 +53,70 @@ class ConfigTests(unittest.TestCase):
     def test_save_config_keeps_hsr_identity(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "config.json"
-            hsr_login.save_config(path, "ltuid_v2=123; ltoken_v2=abc")
+            hsr_login.save_config(path, "ltuid_v2=123; ltoken_v2=abc", ui_language="ja")
             payload = json.loads(path.read_text(encoding="utf-8"))
 
         self.assertEqual(payload["game"], hsr_login.GAME_NAME)
         self.assertEqual(payload["act_id"], hsr_login.ACT_ID)
         self.assertIn("/hkrpg/", payload["event_url"])
+
+
+class LanguageTests(unittest.TestCase):
+    def test_cookie_language_detects_hoyolab_language_cookie(self):
+        self.assertEqual(hsr_login.ui_language_from_cookie("mi18nLang=ja-jp; ltuid_v2=123"), "ja")
+        self.assertEqual(hsr_login.ui_language_from_cookie("mi18nLang=en-us; ltuid_v2=123"), "en")
+
+    def test_language_tag_ignores_non_language_lines(self):
+        self.assertIsNone(hsr_login.ui_language_from_tag("("))
+
+    def test_save_config_uses_hoyolab_cookie_language(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "config.json"
+            hsr_login.save_config(path, "mi18nLang=en-us; ltuid_v2=123; ltoken_v2=abc", ui_language="ja")
+            payload = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["game"], "Honkai: Star Rail")
+        self.assertEqual(payload["lang"], "en-us")
+        self.assertEqual(payload["ui_language"], "en")
+        self.assertIn("lang=en-us", payload["event_url"])
+
+    def test_legacy_config_language_keeps_existing_japanese_display(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "config.json"
+            path.write_text(json.dumps({"lang": "ja-jp"}), encoding="utf-8")
+
+            self.assertEqual(hsr_login.detect_ui_language(path), "ja")
+
+    def test_hoyolab_client_sends_configured_language(self):
+        captured = []
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return None
+
+            def read(self):
+                return b'{"retcode":0,"message":"OK","data":{}}'
+
+        def fake_urlopen(request, timeout):
+            captured.append(request)
+            return FakeResponse()
+
+        client = hsr_login.HoyoLabClient(
+            "mi18nLang=en-us; ltuid_v2=123; ltoken_v2=abc",
+            api_language="en-us",
+            ui_language="en",
+        )
+        with mock.patch("hsr_login.urllib.request.urlopen", side_effect=fake_urlopen):
+            client.info()
+
+        request = captured[0]
+        self.assertIn("lang=en-us", request.full_url)
+        self.assertIn("lang=en-us", request.get_header("Referer"))
+        self.assertEqual(request.get_header("X-rpc-language"), "en-us")
+        self.assertEqual(request.get_header("Accept-language"), "en-US,en;q=0.9")
 
 
 class BrowserTests(unittest.TestCase):
@@ -110,6 +168,11 @@ class ParserTests(unittest.TestCase):
 
         self.assertEqual(args.browser, "safari")
         self.assertTrue(args.check)
+
+    def test_parser_can_render_english_help(self):
+        parser = hsr_login.build_parser("en")
+
+        self.assertIn("Claim HoYoLAB", parser.description)
 
 
 if __name__ == "__main__":
